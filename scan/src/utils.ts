@@ -95,13 +95,19 @@ async function getPrSha(): Promise<string> {
   if (process.env.QODANA_PR_SHA) {
     return process.env.QODANA_PR_SHA
   }
+
+  let pull_request
   if (github.context.payload.pull_request !== undefined) {
+    pull_request = github.context.payload.pull_request
+  } else {
+    // Not a pull_request event. Let's use Octokit to find any PRs.
+    const client = github.getOctokit(getInputs().githubToken)
+    pull_request = await getPullRequest(client)
+  }
+
+  if (pull_request !== undefined) {
     const output = await gitOutput(
-      [
-        'merge-base',
-        github.context.payload.pull_request.base.sha,
-        github.context.payload.pull_request.head.sha
-      ],
+      ['merge-base', pull_request.base.sha, pull_request.head.sha],
       {
         ignoreReturnCode: true
       }
@@ -109,7 +115,7 @@ async function getPrSha(): Promise<string> {
     if (output.exitCode === 0) {
       return output.stdout.trim()
     } else {
-      return github.context.payload.pull_request.base.sha
+      return pull_request.base.sha
     }
   }
   return ''
@@ -385,18 +391,39 @@ export function getWorkflowRunUrl(): string {
   return `${serverUrl}/${repo.owner}/${repo.repo}/actions/runs/${runId}`
 }
 
-function getIssueNumber(): number {
-  // var issueNumber = github.context.payload.pull_request?.number as number
-  // if (!issueNumber) {
-  //
-  // }
-  // TODO: Remove these TEMP logs!
-  core.info(`Issue number: ${github.context.issue.number}`)
-  core.info(
-    `PR number: ${github.context.payload.pull_request?.number as number}`
-  )
+async function getPullRequest(
+  client: InstanceType<typeof GitHub>
+): Promise<{number: number; head: {ref: string}; base: {ref: string}}> {
+  const currentBranch = github.context.ref.split('/').pop()
+  const response = await client.rest.pulls.list({
+    owner: github.context.repo.owner,
+    repo: github.context.repo.repo,
+    head: `${github.context.repo.owner}:${currentBranch}`
+  })
+  return response.data[0]
+}
 
-  return github.context.issue.number
+async function getIssueNumber(
+  client: InstanceType<typeof GitHub>
+): Promise<number> {
+  if (process.env.QODANA_ISSUE_NUMBER) {
+    return process.env.QODANA_ISSUE_NUMBER as unknown as number
+  }
+  let issueNumber: number
+  const pr = github.context.payload.pull_request
+  if (pr) {
+    issueNumber = pr.number
+  } else if (github.context.issue.number) {
+    issueNumber = github.context.issue.number
+  } else {
+    const remotePr = await getPullRequest(client)
+    issueNumber = remotePr?.number || -1
+  }
+
+  if (issueNumber !== -1) {
+    process.env.QODANA_ISSUE_NUMBER = `${issueNumber}`
+  }
+  return issueNumber
 }
 
 /**
@@ -410,19 +437,24 @@ export async function postResultsToPRComments(
   content: string,
   postComment: boolean
 ): Promise<void> {
-  const pr = github.context.payload.pull_request ?? ''
-  if (!postComment || !pr) {
-    core.info(`Not a PR. Do we have a issue number? ${getIssueNumber()}`)
+  if (!postComment) {
     return
   }
   const comment_tag_pattern = `<!-- JetBrains/qodana-action@v${VERSION} : ${toolName} -->`
   const body = `${content}\n${comment_tag_pattern}`
   const client = github.getOctokit(getInputs().githubToken)
-  const comment_id = await findCommentByTag(client, comment_tag_pattern)
-  if (comment_id !== -1) {
-    await updateComment(client, comment_id, body)
-  } else {
-    await createComment(client, body)
+  const issue_number = await getIssueNumber(client)
+  if (issue_number !== -1) {
+    const comment_id = await findCommentByTag(
+      client,
+      issue_number,
+      comment_tag_pattern
+    )
+    if (comment_id !== -1) {
+      await updateComment(client, comment_id, body)
+    } else {
+      await createComment(client, issue_number, body)
+    }
   }
 }
 
@@ -431,17 +463,19 @@ export async function postResultsToPRComments(
  * comment is not found, returns -1. Utilizes GitHub's Octokit REST API client.
  *
  * @param client The Octokit REST API client to be used for searching for the comment.
+ * @param issue_number the pull request issue number
  * @param tag The string to be searched for in the comments' body.
  * @returns A Promise resolving to the comment's ID if found, or -1 if not found or an error occurs.
  */
 export async function findCommentByTag(
   client: InstanceType<typeof GitHub>,
+  issue_number: number,
   tag: string
 ): Promise<number> {
   try {
     const {data: comments} = await client.rest.issues.listComments({
       ...github.context.repo,
-      issue_number: getIssueNumber()
+      issue_number
     })
     const comment = comments.find(c => c?.body?.includes(tag))
     return comment ? comment.id : -1
@@ -454,18 +488,20 @@ export async function findCommentByTag(
 /**
  * Asynchronously creates a comment on the current issue using the provided body text.
  * @param client The Octokit REST API client to be used for creating the comment.
+ * @param issue_number the pull request issue number
  * @param body The text content of the comment to be created.
  * @returns A Promise that resolves when the comment is successfully created.
  */
 export async function createComment(
   client: InstanceType<typeof GitHub>,
+  issue_number: number,
   body: string
 ): Promise<void> {
   try {
     await client.rest.issues.createComment({
       owner: github.context.repo.owner,
       repo: github.context.repo.repo,
-      issue_number: getIssueNumber(),
+      issue_number,
       body
     })
   } catch (error) {
@@ -514,8 +550,8 @@ export async function putReaction(
 ): Promise<void> {
   const client = github.getOctokit(getInputs().githubToken)
 
-  const issue_number = getIssueNumber()
-  if (oldReaction !== '') {
+  const issue_number = await getIssueNumber(client)
+  if (oldReaction !== '' && issue_number !== -1) {
     try {
       const {data: reactions} = await client.rest.reactions.listForIssue({
         ...github.context.repo,

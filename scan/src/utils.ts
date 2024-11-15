@@ -99,13 +99,20 @@ async function getPrSha(): Promise<string> {
   let pull_request
   if (github.context.payload.pull_request !== undefined) {
     pull_request = github.context.payload.pull_request
+    core.info(
+      `Used event for pull_request:\n${JSON.stringify(pull_request, null, 2)}`
+    )
   } else {
     // Not a pull_request event. Let's use Octokit to find any PRs.
     const client = github.getOctokit(getInputs().githubToken)
     pull_request = await getPullRequest(client)
+    core.info(
+      `Used octokit for pull_request:\n${JSON.stringify(pull_request, null, 2)}`
+    )
   }
 
   if (pull_request !== undefined) {
+    core.info('Attempt to find merge-base')
     const output = await gitOutput(
       ['merge-base', pull_request.base.sha, pull_request.head.sha],
       {
@@ -407,17 +414,22 @@ async function getIssueNumber(
   client: InstanceType<typeof GitHub>
 ): Promise<number> {
   if (process.env.QODANA_ISSUE_NUMBER) {
-    return process.env.QODANA_ISSUE_NUMBER as unknown as number
+    const value = process.env.QODANA_ISSUE_NUMBER as unknown as number
+    core.info(`Used issue_number from env: ${value}`)
+    return value
   }
   let issueNumber: number
   const pr = github.context.payload.pull_request
   if (pr) {
     issueNumber = pr.number
+    core.info(`Used pull_request.number from context: ${issueNumber}`)
   } else if (github.context.issue.number) {
     issueNumber = github.context.issue.number
+    core.info(`Used issue.number from context: ${issueNumber}`)
   } else {
     const remotePr = await getPullRequest(client)
     issueNumber = remotePr?.number || -1
+    core.info(`Used Octokit for issue_number: ${issueNumber}`)
   }
 
   if (issueNumber !== -1) {

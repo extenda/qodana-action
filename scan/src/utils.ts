@@ -407,6 +407,7 @@ async function getPullRequest(
     repo: github.context.repo.repo,
     head: `${github.context.repo.owner}:${currentBranch}`
   })
+  core.info(`Octokit response:\n${JSON.stringify(response, null, 2)}`)
   return response.data[0]
 }
 

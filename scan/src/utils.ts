@@ -401,7 +401,7 @@ export function getWorkflowRunUrl(): string {
 async function getPullRequest(
   client: InstanceType<typeof GitHub>
 ): Promise<{number: number; head: {ref: string}; base: {ref: string}}> {
-  const currentBranch = github.context.ref.split('/').pop()
+  const currentBranch = github.context.ref.replace('refs/heads/', '')
   const response = await client.rest.pulls.list({
     owner: github.context.repo.owner,
     repo: github.context.repo.repo,

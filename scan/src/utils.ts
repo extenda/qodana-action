@@ -99,16 +99,12 @@ async function getPrSha(): Promise<string> {
   let pull_request
   if (github.context.payload.pull_request !== undefined) {
     pull_request = github.context.payload.pull_request
-    core.info(
-      `Used event for pull_request:\n${JSON.stringify(pull_request, null, 2)}`
-    )
+    core.info('Use existing pull_request event.')
   } else {
     // Not a pull_request event. Let's use Octokit to find any PRs.
     const client = github.getOctokit(getInputs().githubToken)
     pull_request = await getPullRequest(client)
-    core.info(
-      `Used octokit for pull_request:\n${JSON.stringify(pull_request, null, 2)}`
-    )
+    core.info('Use octokit to find pull_request')
   }
 
   if (pull_request !== undefined) {
@@ -407,7 +403,6 @@ async function getPullRequest(
     repo: github.context.repo.repo,
     head: `${github.context.repo.owner}:${currentBranch}`
   })
-  core.info(`Octokit response:\n${JSON.stringify(response, null, 2)}`)
   return response.data[0]
 }
 
@@ -415,22 +410,24 @@ async function getIssueNumber(
   client: InstanceType<typeof GitHub>
 ): Promise<number> {
   if (process.env.QODANA_ISSUE_NUMBER) {
-    const value = process.env.QODANA_ISSUE_NUMBER as unknown as number
-    core.info(`Used issue_number from env: ${value}`)
-    return value
+    return process.env.QODANA_ISSUE_NUMBER as unknown as number
   }
   let issueNumber: number
   const pr = github.context.payload.pull_request
   if (pr) {
     issueNumber = pr.number
-    core.info(`Used pull_request.number from context: ${issueNumber}`)
+    core.info(
+      `Used github.context.payload.pull_request.number as issue_number: ${issueNumber}`
+    )
   } else if (github.context.issue.number) {
     issueNumber = github.context.issue.number
-    core.info(`Used issue.number from context: ${issueNumber}`)
+    core.info(
+      `Used github.context.issue.number as issue_number: ${issueNumber}`
+    )
   } else {
     const remotePr = await getPullRequest(client)
     issueNumber = remotePr?.number || -1
-    core.info(`Used Octokit for issue_number: ${issueNumber}`)
+    core.info(`Used Octokit to find issue_number: ${issueNumber}`)
   }
 
   if (issueNumber !== -1) {

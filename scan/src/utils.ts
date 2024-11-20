@@ -401,7 +401,8 @@ async function getPullRequest(
   const response = await client.rest.pulls.list({
     owner: github.context.repo.owner,
     repo: github.context.repo.repo,
-    head: `${github.context.repo.owner}:${currentBranch}`
+    head: `${github.context.repo.owner}:${currentBranch}`,
+    state: 'open'
   })
   return response.data[0]
 }
